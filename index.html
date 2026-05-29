@@ -253,70 +253,112 @@ tr.mine:hover td{background:#E5F7EF}
 <div class="toast" id="toast"></div>
 
 <script>
-const SDRs    = ['Simone','Rafael','Milena','Paloma','Sabrina','Diego','Marcelo'];
-const STATUS  = ['não contatado','contatando','declinou','avançou'];
-const SCLS    = {'não contatado':'snc','contatando':'sco','declinou':'sde','avançou':'sav'};
-const SLBL    = {'não contatado':'Não contatado','contatando':'Contatando','declinou':'Declinou','avançou':'Avançou'};
-const PER     = 50;
+const SDRs   = ['Simone','Rafael','Milena','Paloma','Sabrina','Diego','Marcelo'];
+const STATUS = ['não contatado','contatando','declinou','avançou'];
+const SCLS   = {'não contatado':'snc','contatando':'sco','declinou':'sde','avançou':'sav'};
+const SLBL   = {'não contatado':'Não contatado','contatando':'Contatando','declinou':'Declinou','avançou':'Avançou'};
+const PER    = 50;
 
 let db, unsub;
 let leads=[], filtered=[], page=1, sdr='', meus=false, openMenu=null, pickedSDR='';
 
+// ── INIT ──────────────────────────────────────────────────────────────────────
 async function init() {
   sdr = ls('sdr') || '';
   updateHdrSDR();
-  const cfg = FIREBASE_CONFIG;
   try {
-    firebase.initializeApp(cfg);
+    // FIX 1: evita erro "already exists" no refresh
+    if (!firebase.apps.length) {
+      firebase.initializeApp(FIREBASE_CONFIG);
+    }
     db = firebase.firestore();
-    db.settings({ experimentalAutoDetectLongPolling: true });
+    // FIX 2: removido db.settings() — causava timeout em alguns ambientes
     if (!sdr) { showSdr(); return; }
-    await seedIfNeeded();
-    subscribeLeads();
+    await subscribeLeads();
   } catch(ex) {
     setSS('erro: ' + ex.message, false);
+    showBanner('Erro ao conectar com o Firebase: ' + ex.message, 'r');
   }
 }
 
-// AUTO-SEED
+// ── SEED AUTO ─────────────────────────────────────────────────────────────────
 async function seedIfNeeded() {
-  const marker = await db.collection('_meta').doc('seed').get().catch(()=>null);
-  if (marker && marker.exists) return;
-  const snap = await db.collection(COLECAO).limit(1).get().catch(()=>null);
-  if (snap && !snap.empty) {
-    db.collection('_meta').doc('seed').set({done:true}).catch(()=>{});
-    return;
+  try {
+    const marker = await db.collection('_meta').doc('seed').get();
+    if (marker.exists) return;
+    const snap = await db.collection(COLECAO).limit(1).get();
+    if (!snap.empty) {
+      db.collection('_meta').doc('seed').set({done:true}).catch(()=>{});
+      return;
+    }
+    setSS('importando ' + SEED_DATA.length + ' leads…', null);
+    await db.collection('_meta').doc('seed').set({iniciado:new Date().toISOString(),total:SEED_DATA.length});
+    const BS = 400;
+    let done = 0;
+    for (let i=0; i<SEED_DATA.length; i+=BS) {
+      const batch = db.batch();
+      SEED_DATA.slice(i,i+BS).forEach(row => {
+        batch.set(db.collection(COLECAO).doc(), {
+          ...row,
+          status:'não contatado',
+          responsavel:null,
+          observacoes:'',
+          updated_at:null,
+          updated_by:null
+        });
+      });
+      await batch.commit();
+      done += Math.min(BS, SEED_DATA.length - i);
+      setSS(done + '/' + SEED_DATA.length + ' importados…', null);
+    }
+    await db.collection('_meta').doc('seed').update({concluido:new Date().toISOString()}).catch(()=>{});
+  } catch(ex) {
+    // FIX 3: mostra erro de permissão de forma visível
+    if (ex.code === 'permission-denied' || (ex.message && ex.message.includes('permission'))) {
+      showBanner('⚠️ Firestore bloqueado. Acesse Firebase Console → Firestore → Rules e publique as regras permissivas (arquivo firestore.rules).', 'a');
+    } else {
+      console.error('Seed error:', ex);
+    }
+    throw ex;
   }
-  setSS('carregando ' + SEED_DATA.length + ' leads…', null);
-  await db.collection('_meta').doc('seed').set({iniciado:new Date().toISOString(),total:SEED_DATA.length}).catch(()=>{});
-  const BS = 400;
-  let done = 0;
-  for (let i=0; i<SEED_DATA.length; i+=BS) {
-    const batch = db.batch();
-    SEED_DATA.slice(i,i+BS).forEach(row => {
-      batch.set(db.collection(COLECAO).doc(), {...row, status:'não contatado', responsavel:null, observacoes:'', updated_at:null, updated_by:null});
-    });
-    await batch.commit();
-    done += Math.min(BS, SEED_DATA.length - i);
-    setSS(done + '/' + SEED_DATA.length + ' importados…', null);
-  }
-  await db.collection('_meta').doc('seed').update({concluido:new Date().toISOString()}).catch(()=>{});
 }
 
-function subscribeLeads() {
-  setSS('carregando…', null);
+// ── FIRESTORE REALTIME ────────────────────────────────────────────────────────
+async function subscribeLeads() {
+  setSS('verificando…', null);
   if (unsub) unsub();
+
+  // FIX 4: seed sempre roda antes de assinar, independente do fluxo SDR
+  try {
+    await seedIfNeeded();
+  } catch(ex) {
+    // Continua mesmo com erro de seed — dados podem já existir
+  }
+
+  setSS('conectando…', null);
   unsub = db.collection(COLECAO).onSnapshot(snap => {
     snap.docChanges().forEach(ch => {
       const doc = {_id:ch.doc.id, ...ch.doc.data()};
       if (ch.type==='added') leads.push(doc);
-      else if (ch.type==='modified') { const i=leads.findIndex(l=>l._id===doc._id); if(i!==-1) leads[i]=doc; else leads.push(doc); }
+      else if (ch.type==='modified') {
+        const i=leads.findIndex(l=>l._id===doc._id);
+        if (i!==-1) leads[i]=doc; else leads.push(doc);
+      }
       else if (ch.type==='removed') leads=leads.filter(l=>l._id!==doc._id);
     });
     buildCatFilter();
     applyF();
-    setSS('ao vivo', true);
-  }, err => setSS('erro: '+err.message, false));
+    setSS('ao vivo ✓', true);
+    hideBanner();
+  }, err => {
+    setSS('erro de acesso', false);
+    if (err.code === 'permission-denied') {
+      showBanner('🔒 Firestore bloqueado. Publique as regras: Firebase Console → Firestore Database → Rules → cole o conteúdo de firestore.rules → Publish.', 'r');
+    } else {
+      showBanner('Erro Firestore: ' + err.message, 'r');
+    }
+    console.error('Firestore error:', err);
+  });
 }
 
 async function updateLead(id, changes) {
@@ -331,6 +373,7 @@ async function updateLead(id, changes) {
   } catch(ex) { toast('Erro: '+ex.message); return false; }
 }
 
+// ── FILTROS ───────────────────────────────────────────────────────────────────
 function applyF() {
   const fSt=gv('f-st'), fCa=gv('f-ca'), fRe=gv('f-re'),
         fWa=gv('f-wa'), fQ=gv('f-q').toLowerCase().trim(), fTipo=gv('f-tipo');
@@ -340,13 +383,10 @@ function applyF() {
     if (fCa && l.categoria!==fCa) return false;
     if (fRe==='__livre' && l.responsavel) return false;
     if (fRe && fRe!=='__livre' && l.responsavel!==fRe) return false;
-    if (fWa==='SIM') {
-      const hasContact = l.whatsapp==='SIM' || l.email;
-      if (!hasContact) return false;
-    }
+    if (fWa==='SIM') { if (!(l.whatsapp==='SIM' || l.email)) return false; }
     if (meus && l.responsavel!==sdr) return false;
     if (fQ) {
-      const hay = [l.empresa,l.nome,l.cargo,l.email,l.categoria].filter(Boolean).join(' ').toLowerCase();
+      const hay=[l.empresa,l.nome,l.cargo,l.email,l.categoria].filter(Boolean).join(' ').toLowerCase();
       if (!hay.includes(fQ)) return false;
     }
     return true;
@@ -361,11 +401,12 @@ function toggleMeus() {
   applyF();
 }
 
+// ── RENDER ────────────────────────────────────────────────────────────────────
 function renderTable() {
   const tbody=document.getElementById('tbody');
   const start=(page-1)*PER, slice=filtered.slice(start,start+PER);
   if (!slice.length) {
-    tbody.innerHTML='<tr><td colspan="8" class="empty"><h3>Nenhum lead encontrado</h3><p>Ajuste os filtros acima.</p></td></tr>';
+    tbody.innerHTML='<tr><td colspan="8" class="empty"><h3>Nenhum lead encontrado</h3><p>Ajuste os filtros ou aguarde o carregamento.</p></td></tr>';
     document.getElementById('pag').innerHTML=''; return;
   }
   tbody.innerHTML = slice.map((l,idx) => {
@@ -377,7 +418,7 @@ function renderTable() {
     const sl = SLBL[l.status]||l.status;
     const upd = l.updated_at ? fmtDate(l.updated_at) : '';
     const updBy = l.updated_by ? '<div style="font-size:10px;color:var(--t2)">'+e(l.updated_by)+'</div>' : '';
-    const rOpts = ['',...SDRs].map(s=>'<option value="'+s+'" '+(l.responsavel===s?'selected':'')+'>'+( s||'— ninguém')+'</option>').join('');
+    const rOpts = ['',...SDRs].map(s=>'<option value="'+s+'" '+(l.responsavel===s?'selected':'')+'>'+(s||'— ninguém')+'</option>').join('');
 
     let nomeHtml, catHtml, canalHtml;
 
@@ -407,10 +448,10 @@ function renderTable() {
       +'<td>'+nomeHtml+'</td>'
       +'<td>'+catHtml+'</td>'
       +'<td>'+canalHtml+'</td>'
-      +'<td><select class="rsel '+(isMine?'mine':'')+'" onchange="onResp(''+l._id+'',this)">'+rOpts+'</select></td>'
-      +'<td><div class="swrap"><button class="sbadge '+sc+'" onclick="toggleMenu(''+l._id+'',this)">'+sl+' <span class="arr">&#9662;</span></button>'
-      +'<div class="smenu h" id="sm-'+l._id+'">'+STATUS.map(s=>'<button onclick="onStatus(''+l._id+'',''+s+'')">'+SLBL[s]+'</button>').join('')+'</div></div></td>'
-      +'<td><textarea class="obs" rows="1" placeholder="Anotação…" onblur="onObs(''+l._id+'',this)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();this.blur()}">'+e(l.observacoes||'')+'</textarea></td>'
+      +'<td><select class="rsel '+(isMine?'mine':'')+'" onchange="onResp(\''+l._id+'\',this)">'+rOpts+'</select></td>'
+      +'<td><div class="swrap"><button class="sbadge '+sc+'" onclick="toggleMenu(\''+l._id+'\',this)">'+sl+' <span class="arr">&#9662;</span></button>'
+      +'<div class="smenu h" id="sm-'+l._id+'">'+STATUS.map(s=>'<button onclick="onStatus(\''+l._id+'\',\''+s+'\')">'+SLBL[s]+'</button>').join('')+'</div></div></td>'
+      +'<td><textarea class="obs" rows="1" placeholder="Anotação…" onblur="onObs(\''+l._id+'\',this)" onkeydown="if(event.key===\'Enter\'&&!event.shiftKey){event.preventDefault();this.blur()}">'+e(l.observacoes||'')+'</textarea></td>'
       +'<td><div style="font-size:10px;color:var(--t3)">'+upd+'</div>'+updBy+'</td>'
       +'</tr>';
   }).join('');
@@ -441,6 +482,7 @@ function renderPag() {
 
 function goP(p){page=p;renderTable();document.querySelector('.twrap')?.scrollIntoView({behavior:'smooth',block:'start'});}
 
+// ── INTERAÇÕES ────────────────────────────────────────────────────────────────
 function toggleMenu(id,btn){
   const m=document.getElementById('sm-'+id);
   if(openMenu&&openMenu!==m)openMenu.classList.add('h');
@@ -472,6 +514,7 @@ function buildCatFilter(){
   sel.innerHTML='<option value="">Todas as categorias</option>'+cats.map(c=>'<option value="'+c+'" '+(c===cur?'selected':'')+'>'+c+'</option>').join('');
 }
 
+// ── TABS ──────────────────────────────────────────────────────────────────────
 function switchTab(tab){
   ['leads','dicas'].forEach(t=>{
     document.getElementById('tc-'+t)?.classList.toggle('on',t===tab);
@@ -492,13 +535,13 @@ function renderDicas(){
   <div class="d-body open" id="dbody-prod">
     <div class="d-grid">
       <div class="dc g"><h3>O curso completo</h3><p>Formação presencial em BH para donos e gestores de PME que viraram líderes sem nunca ter aprendido a liderar. Turmas pequenas, foco prático.</p><p style="margin-top:8px"><strong>Temas:</strong> autoconhecimento como líder, comunicação não-violenta (CNV), gestão de pessoas, gestão de processos e tempo, oratória, inovação.</p></div>
-      <div class="dc b"><h3>O workshop (porta de entrada)</h3><p>Um dia para quem quer experimentar antes de comprometer com o curso completo.</p><p style="margin-top:6px"><strong>Data:</strong> 13/07 &nbsp;|&nbsp; <strong>Valor:</strong> R$ 269</p><p style="margin-top:6px">Foco no dia: autoconhecimento como líder, gestão de processos e tempo, inovação.</p><p style="margin-top:6px"><em>"Experimente antes de decidir pelo curso completo."</em></p></div>
-      <div class="dc a"><h3>A instrutora — Simone</h3><p>Especialista em processos com carreira em grandes empresas. Viveu a fusão Localiza + Unidas — um dos processos de integração mais complexos do Brasil.</p><p style="margin-top:8px">Ensina como organizar o caos, enxergar o que trava a equipe e criar estrutura onde só há pressão.</p></div>
+      <div class="dc b"><h3>O workshop (porta de entrada)</h3><p>Um dia para quem quer experimentar antes de comprometer com o curso completo.</p><p style="margin-top:6px"><strong>Data:</strong> 13/07 &nbsp;|&nbsp; <strong>Valor:</strong> R$ 269</p><p style="margin-top:6px">Foco: autoconhecimento como líder, gestão de processos e tempo, inovação.</p><p style="margin-top:6px"><em>"Experimente antes de decidir pelo curso completo."</em></p></div>
+      <div class="dc a"><h3>A instrutora — Simone</h3><p>Especialista em processos, carreira em grandes empresas. Viveu a fusão Localiza + Unidas — um dos processos de integração mais complexos do Brasil.</p><p style="margin-top:8px">Ensina como organizar o caos, enxergar o que trava a equipe e criar estrutura onde só há pressão.</p></div>
     </div>
     <div class="d-grid">
-      <div class="dc gr"><h3>Para quem é</h3><ul><li>Dono/sócio de PME que virou gestor sem preparo</li><li>Gerente/coordenador que lidera equipe mas nunca teve formação</li><li>Empreendedor crescendo e com dificuldade de delegar</li><li>Quem sente que o problema está na equipe, mas não sabe exatamente onde</li></ul></div>
-      <div class="dc gr"><h3>Argumentos principais</h3><ul><li>"Você virou líder do dia para a noite — sem manual"</li><li>"Sua equipe trava e você não sabe por quê"</li><li>"O problema não é a equipe — é falta de estrutura e método"</li><li>"Um dia de formação bem usado vale meses de tentativa e erro"</li><li>Workshop: "R$ 269 e um dia — experimente"</li></ul></div>
-      <div class="dc gr"><h3>Objeções comuns → respostas</h3><ul><li><strong>"Não tenho tempo"</strong> → "É exatamente por falta de método que você não tem tempo. O curso te devolve o controle."</li><li><strong>"É caro"</strong> → "O workshop é R$ 269 — menos que um dia de equipe perdida."</li><li><strong>"Já fiz cursos"</strong> → "Esse é presencial, turma pequena, focado em PME de BH."</li><li><strong>"Minha equipe que precisa"</strong> → "Líder sem método forma equipe sem método. Começa em você."</li></ul></div>
+      <div class="dc gr"><h3>Para quem é</h3><ul><li>Dono/sócio de PME que virou gestor sem preparo</li><li>Gerente/coordenador que lidera equipe mas nunca teve formação</li><li>Empreendedor crescendo com dificuldade de delegar</li><li>Quem sente que o problema está na equipe, mas não sabe onde</li></ul></div>
+      <div class="dc gr"><h3>Argumentos principais</h3><ul><li>"Você virou líder do dia para a noite — sem manual"</li><li>"Sua equipe trava e você não sabe por quê"</li><li>"O problema não é a equipe — é falta de estrutura e método"</li><li>"Um dia de formação vale meses de tentativa e erro"</li><li>Workshop: "R$ 269 e um dia — experimente primeiro"</li></ul></div>
+      <div class="dc gr"><h3>Objeções → respostas</h3><ul><li><strong>"Não tenho tempo"</strong> → "É exatamente por falta de método que você não tem tempo. O curso te devolve o controle."</li><li><strong>"É caro"</strong> → "O workshop é R$ 269 — menos que um dia de equipe perdida."</li><li><strong>"Já fiz cursos"</strong> → "Esse é presencial, turma pequena, focado em PME de BH."</li><li><strong>"Minha equipe que precisa"</strong> → "Líder sem método forma equipe sem método."</li></ul></div>
     </div>
   </div>
 </div>
@@ -506,18 +549,18 @@ function renderDicas(){
   <div class="d-hdr" onclick="toggleD('canais')"><h2>&#128225; Canais — quando e como usar cada um</h2><span class="d-chev open" id="chev-canais">&#9650;</span></div>
   <div class="d-body open" id="dbody-canais">
     <div class="d-grid" style="grid-template-columns:repeat(auto-fit,minmax(210px,1fr))">
-      <div class="dc g"><h3>LinkedIn &#10003; Melhor canal</h3><ul><li>Profissional, menos invasivo</li><li>Leads Apollo já têm o perfil aqui</li><li>Note de conexão: até 300 chars</li><li>Taxa de resposta esperada: 15–25%</li><li><strong>Limite free:</strong> 15–20 conexões/dia</li><li>Não use InMail em massa</li></ul></div>
-      <div class="dc a"><h3>WhatsApp &#9888; Com moderação</h3><ul><li>Alto impacto, mas risco real de ban</li><li>Máx. 20–30 mensagens/dia por número</li><li>Nunca texto genérico para todos</li><li>Proibido: disparador automático</li><li><strong>Ban:</strong> conta bloqueada sem aviso</li><li>Use somente leads com WhatsApp = SIM</li></ul></div>
-      <div class="dc b"><h3>Cold Call &#128222; Direto</h3><ul><li>Melhor horário: ter–sex, 9–12h ou 14–17h</li><li>Objetivo: marcar reunião, não vender</li><li>Seja breve: máx 2 min</li><li>Prepare o nome + empresa antes de ligar</li><li>Não atendeu? Deixe voicemail de 30s</li></ul></div>
-      <div class="dc gr"><h3>Email &#128140; Suporte</h3><ul><li>Apollo tem 1.016 emails verificados</li><li>Use como follow-up do LinkedIn</li><li>Assunto: curto e específico</li><li>Corpo: 4–5 linhas no máximo</li><li>Não envie mais de 1 email/semana para a mesma pessoa</li></ul></div>
+      <div class="dc g"><h3>LinkedIn &#10003; Melhor canal</h3><ul><li>Profissional, menos invasivo</li><li>Leads Apollo têm o perfil</li><li>Note de conexão: até 300 chars</li><li>Taxa de resposta: 15–25%</li><li><strong>Limite free:</strong> 15–20 conexões/dia</li></ul></div>
+      <div class="dc a"><h3>WhatsApp &#9888; Com moderação</h3><ul><li>Alto impacto, risco de ban</li><li>Máx. 20–30 msgs/dia por número</li><li>Nunca texto genérico para todos</li><li>Proibido: disparador automático</li><li><strong>Ban:</strong> conta bloqueada sem aviso</li></ul></div>
+      <div class="dc b"><h3>Cold Call &#128222; Direto</h3><ul><li>Melhor: ter–sex, 9–12h ou 14–17h</li><li>Objetivo: marcar reunião, não vender</li><li>Máx. 2 minutos</li><li>Prepare nome + empresa antes</li><li>Não atendeu? Voicemail de 30s</li></ul></div>
+      <div class="dc gr"><h3>Email &#128140; Suporte</h3><ul><li>Apollo tem 1.016 emails verificados</li><li>Use como follow-up do LinkedIn</li><li>Assunto curto e específico</li><li>Corpo: 4–5 linhas no máximo</li></ul></div>
     </div>
-    <div class="info"><strong>Regra de ouro:</strong> O objetivo do primeiro contato é <strong>marcar uma conversa de 15 minutos</strong> — não vender o curso. Você vende o interesse, não o produto. Fale pouco, ouça mais.</div>
+    <div class="info"><strong>Regra de ouro:</strong> O objetivo do primeiro contato é <strong>marcar uma conversa de 15 minutos</strong> — não vender o curso. Você vende o interesse, não o produto.</div>
   </div>
 </div>
 <div class="d-sec">
   <div class="d-hdr" onclick="toggleD('scripts')"><h2>&#128221; Scripts prontos — copie e personalize</h2><span class="d-chev open" id="chev-scripts">&#9650;</span></div>
   <div class="d-body open" id="dbody-scripts">
-    <div class="warn"><strong>&#9888; Importante:</strong> Sempre substitua <strong>[Nome]</strong>, <strong>[Empresa]</strong> e <strong>[Cargo]</strong> pelas informações reais do lead antes de enviar. Mensagem genérica = taxa de resposta próxima de zero.</div>
+    <div class="warn"><strong>&#9888;</strong> Substitua [Nome], [Empresa], [Cargo] pelos dados reais. Mensagem genérica = taxa de resposta próxima de zero.</div>
     <h3 style="font-size:13px;font-weight:500;margin-bottom:10px">&#128279; LinkedIn — nota de conexão (máx 300 chars)</h3>
     <div class="sbox"><h4>Para donos / sócios / CEO</h4><button class="cps" onclick="cpScript(this)">copiar</button><pre>Olá [Nome]! Vi que você lidera a [Empresa] aqui em BH. Sou da Mercúrio Educação Corporativa — trabalhamos com gestores de PME em formação prática de liderança. Posso te apresentar em 10 minutos?</pre></div>
     <div class="sbox"><h4>Para gerentes / coordenadores / HR Business Partner</h4><button class="cps" onclick="cpScript(this)">copiar</button><pre>Olá [Nome]! Vi que você lidera equipes em [Empresa]. Sou da Mercúrio Educação Corporativa — desenvolvemos líderes de PME em BH com foco prático. Podemos trocar uma ideia?</pre></div>
@@ -529,33 +572,29 @@ Muitos chegam até nós com o mesmo desafio: viraram líderes de uma hora para o
 
 Você teria 15 minutos essa semana para uma conversa rápida?</pre></div>
     <h3 style="font-size:13px;font-weight:500;margin:16px 0 10px">&#128241; WhatsApp — primeira mensagem</h3>
-    <div class="warn"><strong>&#9888; WhatsApp:</strong> Máx. 20–30 mensagens/dia por número. Nunca use disparador. Cada mensagem deve parecer escrita na hora — porque deve ser.</div>
+    <div class="warn"><strong>&#9888; WhatsApp:</strong> Máx. 20–30 msgs/dia por número. Nunca use disparador automático.</div>
     <div class="sbox"><h4>Para empresa (Google Maps)</h4><button class="cps" onclick="cpScript(this)">copiar</button><pre>Olá! Tudo bem?
 
-Sou [Nome] da Mercúrio Educação Corporativa, aqui de BH. Trabalhamos com donos e gestores de empresas no desenvolvimento de liderança e gestão de equipes.
+Sou [Nome] da Mercúrio Educação Corporativa, aqui de BH. Trabalhamos com donos e gestores no desenvolvimento de liderança e gestão de equipes.
 
 Vi a [Empresa] e fiquei curioso — você é responsável pela equipe? Posso contar brevemente o que fazemos?</pre></div>
-    <div class="sbox"><h4>Follow-up WhatsApp (7–10 dias sem resposta)</h4><button class="cps" onclick="cpScript(this)">copiar</button><pre>Olá [Nome]! Passei por aqui semana passada.
+    <div class="sbox"><h4>Follow-up (7–10 dias sem resposta)</h4><button class="cps" onclick="cpScript(this)">copiar</button><pre>Olá [Nome]! Passei por aqui semana passada.
 
 Sei que a rotina de gestor é corrida — por isso nossos programas são focados e sem enrolação.
 
-Se tiver 15 minutos essa semana, adoraria contar o que fazemos. Posso mandar uma apresentação também, se preferir.</pre></div>
+Se tiver 15 minutos essa semana, adoraria contar o que fazemos.</pre></div>
     <h3 style="font-size:13px;font-weight:500;margin:16px 0 10px">&#128222; Cold Call — roteiro</h3>
-    <div class="sbox"><h4>Abertura (primeiros 30 segundos — decisivos)</h4><button class="cps" onclick="cpScript(this)">copiar</button><pre>Bom dia/tarde, [Nome]? [Pausa — espere resposta]
+    <div class="sbox"><h4>Abertura (30 segundos)</h4><button class="cps" onclick="cpScript(this)">copiar</button><pre>Bom dia/tarde, [Nome]? [Pausa]
 
-Aqui é [Seu nome], da Mercúrio Educação Corporativa, aqui de BH.
-Você tem dois minutinhos? [Pausa]
+Aqui é [Seu nome], da Mercúrio Educação Corporativa, aqui de BH. Você tem dois minutinhos? [Pausa]
 
-A gente trabalha com donos e gestores de empresa em formação de liderança — presencial, aqui em BH, turmas pequenas.
-Você tem uma equipe sob sua responsabilidade?</pre></div>
-    <div class="sbox"><h4>Se interesse → próximo passo</h4><button class="cps" onclick="cpScript(this)">copiar</button><pre>"Perfeito. O que a gente faz é ajudar gestores a estruturar melhor a liderança — muita gente chega até nós porque virou líder sem formação para isso.
+A gente trabalha com gestores de empresa em formação de liderança — presencial, BH, turmas pequenas. Você tem equipe sob sua responsabilidade?</pre></div>
+    <div class="sbox"><h4>Se interesse → fechar reunião</h4><button class="cps" onclick="cpScript(this)">copiar</button><pre>"Perfeito. O que a gente faz é ajudar gestores a estruturar melhor a liderança — muita gente chega até nós porque virou líder sem formação para isso.
 
-Você teria 15 minutos essa semana para eu te apresentar o que fazemos? Qual é o melhor horário para você?"</pre></div>
-    <div class="sbox"><h4>Objeção "não tenho interesse"</h4><button class="cps" onclick="cpScript(this)">copiar</button><pre>"Faz todo sentido. Posso te perguntar uma coisa antes de encerrar? O que você usa hoje para desenvolver sua liderança?
+Você teria 15 minutos essa semana? Qual é o melhor horário para você?"</pre></div>
+    <div class="sbox"><h4>Objeção "não tenho interesse"</h4><button class="cps" onclick="cpScript(this)">copiar</button><pre>"Faz sentido. Posso perguntar uma coisa antes de encerrar? O que você usa hoje para desenvolver sua liderança? [Ouça]
 
-[Ouça]
-
-Entendo. A diferença do nosso programa é presencial, turma pequena, focado em PME de BH — bem diferente de curso online genérico. Se um dia fizer sentido, posso te mandar algo por WhatsApp?"</pre></div>
+Entendo. Nosso programa é presencial, turma pequena, focado em PME de BH — bem diferente de curso online. Se um dia fizer sentido, posso te mandar algo por WhatsApp?"</pre></div>
     <h3 style="font-size:13px;font-weight:500;margin:16px 0 10px">&#128140; Email frio (leads Apollo)</h3>
     <div class="sbox"><h4>Assunto + corpo</h4><button class="cps" onclick="cpScript(this)">copiar</button><pre>Assunto: Desenvolvimento de líderes em [Empresa] — 15 minutos?
 
@@ -563,33 +602,30 @@ Olá [Nome],
 
 Vi seu perfil no LinkedIn e fiquei curioso sobre como a [Empresa] desenvolve suas lideranças.
 
-Sou [Seu nome] da Mercúrio Educação Corporativa — trabalhamos com gestores de PME em BH em formação prática de liderança. Presencial, turmas pequenas, foco em situações reais.
+Sou [Seu nome] da Mercúrio Educação Corporativa — formação prática de liderança para gestores de PME em BH. Presencial, turmas pequenas.
 
 Você teria 15 minutos essa semana?
 
-Abraço,
 [Seu nome] | Mercúrio Educação Corporativa</pre></div>
   </div>
 </div>
 <div class="d-sec">
-  <div class="d-hdr" onclick="toggleD('ops')"><h2>&#9881;&#65039; Dicas operacionais do dia a dia</h2><span class="d-chev open" id="chev-ops">&#9650;</span></div>
+  <div class="d-hdr" onclick="toggleD('ops')"><h2>&#9881;&#65039; Dicas operacionais</h2><span class="d-chev open" id="chev-ops">&#9650;</span></div>
   <div class="d-body open" id="dbody-ops">
     <div class="d-grid">
-      <div class="dc g"><h3>Cadência recomendada</h3><ul><li><strong>Dia 1:</strong> Conexão LinkedIn ou WA/ligação</li><li><strong>Dia 4–5:</strong> Follow-up se não respondeu</li><li><strong>Dia 10–12:</strong> Tentativa por canal diferente</li><li><strong>Após 3 tentativas:</strong> arquivar no status "declinou"</li><li>Não insista mais de 3 vezes</li></ul></div>
-      <div class="dc b"><h3>Prioridade dos leads</h3><ul><li>&#129351; <strong>Apollo com email verificado</strong> → email + LinkedIn</li><li>&#129352; <strong>Google Maps WA = SIM</strong> → WA + LinkedIn</li><li>&#129353; <strong>Google Maps fixo</strong> → cold call</li><li>Foque em CEO, Sócio, Owner, C-Level primeiro</li><li>Coordenador/HRBP → LinkedIn é melhor canal</li></ul></div>
-      <div class="dc a"><h3>Erros a evitar</h3><ul><li>&#10060; Enviar o mesmo texto para todos</li><li>&#10060; Falar tudo no primeiro contato</li><li>&#10060; Ligar sem pesquisar a empresa antes</li><li>&#10060; Insistir mais de 3 vezes</li><li>&#10060; Usar disparador automático no WA</li><li>&#10060; Marcar lead como "Contatando" sem ter enviado</li></ul></div>
-      <div class="dc gr"><h3>Meta por SDR / semana</h3><ul><li>50–70 contatos iniciados</li><li>10–15 respostas recebidas</li><li>3–5 conversas qualificadas</li><li>1–2 reuniões marcadas</li><li>Registre tudo aqui — colega não pode trabalhar lead que você não marcou</li></ul></div>
+      <div class="dc g"><h3>Cadência recomendada</h3><ul><li><strong>Dia 1:</strong> Conexão LinkedIn ou WA/ligação</li><li><strong>Dia 4–5:</strong> Follow-up se não respondeu</li><li><strong>Dia 10–12:</strong> Canal diferente</li><li><strong>Após 3 tentativas:</strong> marcar "declinou"</li></ul></div>
+      <div class="dc b"><h3>Prioridade dos leads</h3><ul><li>&#129351; Apollo com email verificado → email + LinkedIn</li><li>&#129352; Google Maps WA = SIM → WA + LinkedIn</li><li>&#129353; Google Maps fixo → cold call</li><li>Foque em CEO, Sócio, Owner, C-Level primeiro</li></ul></div>
+      <div class="dc a"><h3>Erros a evitar</h3><ul><li>&#10060; Mesmo texto para todos</li><li>&#10060; Falar tudo no primeiro contato</li><li>&#10060; Ligar sem pesquisar a empresa</li><li>&#10060; Insistir mais de 3 vezes</li><li>&#10060; Disparador automático no WA</li></ul></div>
+      <div class="dc gr"><h3>Meta semanal por SDR</h3><ul><li>50–70 contatos iniciados</li><li>10–15 respostas</li><li>3–5 conversas qualificadas</li><li>1–2 reuniões marcadas</li></ul></div>
     </div>
-    <div class="info"><strong>Regra da atribuição:</strong> Só marque "Contatando" depois de ter enviado a primeira mensagem de verdade. Não reserve leads que não vai trabalhar essa semana — libere para os colegas.</div>
+    <div class="info"><strong>Atribuição:</strong> Só marque "Contatando" depois de ter enviado de verdade. Não reserve leads que não vai trabalhar esta semana.</div>
     <div style="margin-top:12px">
       <p style="font-size:12px;font-weight:500;margin-bottom:6px">Quando mudar para "Avançou" e lançar no CRM real:</p>
-      <div>
-        <span class="pill">Lead respondeu positivamente</span>
-        <span class="pill">Tem equipe sob gestão</span>
-        <span class="pill">Interesse em desenvolvimento</span>
-        <span class="pill">Aceitou conversa de 15 min</span>
-        <span class="pill">Pediu informações sobre o curso</span>
-      </div>
+      <span class="pill">Lead respondeu positivamente</span>
+      <span class="pill">Tem equipe sob gestão</span>
+      <span class="pill">Interesse em desenvolvimento</span>
+      <span class="pill">Aceitou conversa de 15 min</span>
+      <span class="pill">Pediu info sobre o curso</span>
     </div>
   </div>
 </div>
@@ -609,10 +645,11 @@ function cpScript(btn){
   });
 }
 
+// ── SDR ───────────────────────────────────────────────────────────────────────
 function showSdr(){
   pickedSDR=sdr;
   const pick=document.getElementById('sdr-pick');
-  pick.innerHTML=SDRs.map(s=>'<button class="sdr-btn '+(s===sdr?'on':'')+'" onclick="pickSDR(''+s+'',this)">'+s+'</button>').join('');
+  pick.innerHTML=SDRs.map(s=>'<button class="sdr-btn '+(s===sdr?'on':'')+'" onclick="pickSDR(\''+s+'\',this)">'+s+'</button>').join('');
   document.getElementById('btn-ok-sdr').disabled=!sdr;
   document.getElementById('ov-sdr').classList.remove('h');
 }
@@ -628,10 +665,29 @@ function confirmSdr(){
   document.getElementById('ov-sdr').classList.add('h');
   updateHdrSDR();
   if(!db){init();return;}
-  if(!unsub) subscribeLeads();
-  applyF(); renderStats();
+  subscribeLeads(); // FIX: seed agora está dentro de subscribeLeads
 }
 function updateHdrSDR(){sv('h-av',sdr?sdr.slice(0,2).toUpperCase():'?');sv('h-nm',sdr||'—');}
+
+// ── BANNER DE ERRO ────────────────────────────────────────────────────────────
+function showBanner(msg, type) {
+  let b=document.getElementById('err-banner');
+  if(!b){
+    b=document.createElement('div');
+    b.id='err-banner';
+    b.style.cssText='padding:12px 20px;font-size:13px;text-align:center;line-height:1.5;cursor:pointer;';
+    b.title='Clique para fechar';
+    b.onclick=hideBanner;
+    const ref=document.querySelector('.tabs');
+    ref ? ref.insertAdjacentElement('afterend',b) : document.body.prepend(b);
+  }
+  const colors={r:'background:#A32D2D;color:#fff',a:'background:#BA7517;color:#fff',g:'background:#1D9E75;color:#fff'};
+  b.style.cssText+=(colors[type]||colors.r)+';display:block;';
+  b.textContent=msg+' (clique para fechar)';
+}
+function hideBanner(){const b=document.getElementById('err-banner');if(b)b.style.display='none';}
+
+// ── UTILS ─────────────────────────────────────────────────────────────────────
 function setSS(msg,ok){sv('slbl',msg);const d=document.getElementById('sdot');d.classList.toggle('ok',ok===true);d.classList.toggle('err',ok===false);}
 function fmtDate(iso){const d=new Date(iso),now=new Date(),diff=(now-d)/1000;if(diff<60)return'agora';if(diff<3600)return Math.floor(diff/60)+'m';if(diff<86400)return Math.floor(diff/3600)+'h';return d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});}
 function e(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
