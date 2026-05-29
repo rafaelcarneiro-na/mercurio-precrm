@@ -1,0 +1,719 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mercúrio — Pre-CRM</title>
+
+<!-- Firebase SDK (compat) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     CONFIGURE AQUI antes de subir para o GitHub
+     Firebase Console → Project Settings → Your apps → SDK setup
+     ══════════════════════════════════════════════════════════════════ -->
+<script>
+const FIREBASE_CONFIG = {
+  apiKey:            "PREENCHA",
+  authDomain:        "PREENCHA",
+  projectId:         "PREENCHA",
+  storageBucket:     "PREENCHA",
+  messagingSenderId: "PREENCHA",
+  appId:             "PREENCHA"
+};
+const COLECAO = "leads"; // nome da coleção no Firestore — não altere
+</script>
+<!-- ══════════════════════════════════════════════════════════════════ -->
+
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --g:#1D9E75;--gd:#0F6E56;--gl:#E1F5EE;
+  --b:#185FA5;--bl:#E6F1FB;
+  --r:#A32D2D;--rl:#FCEBEB;
+  --a:#BA7517;--al:#FAEEDA;
+  --gr:#F5F4F0;--bord:#E2E0D8;
+  --t:#1A1A18;--t2:#6B6B67;--t3:#9A9991;
+}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--gr);color:var(--t);font-size:13px;min-height:100vh}
+button{cursor:pointer;font-family:inherit}
+input,select,textarea{font-family:inherit;color:var(--t)}
+
+/* OVERLAY */
+.ov{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;display:flex;align-items:center;justify-content:center}
+.ov.h{display:none}
+.modal{background:#fff;border-radius:12px;padding:28px 32px;width:460px;max-width:95vw}
+.modal h2{font-size:15px;font-weight:500;margin-bottom:6px}
+.modal p{font-size:12px;color:var(--t2);line-height:1.6;margin-bottom:18px}
+.fi{margin-bottom:12px}
+.fi label{display:block;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--t2);margin-bottom:4px}
+.fi input,.fi textarea{width:100%;border:1px solid var(--bord);border-radius:8px;padding:8px 10px;font-size:12px;outline:none}
+.fi input:focus,.fi textarea:focus{border-color:var(--g)}
+.fi textarea{resize:vertical;height:80px;font-size:11px}
+.fi small{font-size:11px;color:var(--t3);margin-top:3px;display:block}
+.bp{background:var(--g);color:#fff;border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:500;width:100%;margin-top:4px}
+.bp:hover{background:var(--gd)}
+.bp:disabled{opacity:.5;cursor:not-allowed}
+.bs{background:#fff;color:var(--t);border:1px solid var(--bord);border-radius:8px;padding:8px 14px;font-size:12px}
+.bs:hover{background:var(--gr)}
+.modal-row{display:flex;gap:8px;margin-top:8px}
+
+/* SDR PICKER */
+.sdrs{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
+.sdr-btn{border:1px solid var(--bord);border-radius:8px;padding:9px 18px;background:#fff;font-size:13px;transition:all .15s}
+.sdr-btn:hover{border-color:var(--g);background:var(--gl)}
+.sdr-btn.on{background:var(--g);border-color:var(--g);color:#fff;font-weight:500}
+
+/* HEADER */
+.hdr{background:var(--g);height:52px;padding:0 20px;display:flex;align-items:center;gap:14px;position:sticky;top:0;z-index:100}
+.hdr-logo{font-size:14px;font-weight:600;color:#fff;flex:1}
+.hdr-logo span{opacity:.65;font-weight:400;font-size:11px;margin-left:6px}
+.sdr-chip{display:flex;align-items:center;gap:7px;background:rgba(255,255,255,.15);border-radius:20px;padding:4px 12px 4px 5px}
+.sdr-av{width:26px;height:26px;border-radius:50%;background:rgba(255,255,255,.25);color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.sdr-nm{color:#fff;font-size:12px;font-weight:500}
+.sdr-ch{background:none;border:none;color:rgba(255,255,255,.7);font-size:11px}
+.sdr-ch:hover{color:#fff}
+.sync{display:flex;align-items:center;gap:6px}
+.sdot{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.3);flex-shrink:0;transition:.3s}
+.sdot.ok{background:#6EE7B7}
+.sdot.err{background:#FCA5A5}
+.slbl{font-size:11px;color:rgba(255,255,255,.65);white-space:nowrap}
+.hdr-btns{display:flex;gap:6px}
+.hdr-btn{background:rgba(255,255,255,.15);border:none;border-radius:6px;color:#fff;padding:5px 10px;font-size:11px}
+.hdr-btn:hover{background:rgba(255,255,255,.25)}
+
+/* STATS */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:8px;padding:12px 20px}
+.stat{background:#fff;border:1px solid var(--bord);border-radius:8px;padding:10px 14px}
+.sval{font-size:22px;font-weight:500;line-height:1}
+.slb{font-size:11px;color:var(--t2);margin-top:2px}
+.stat.b .sval{color:var(--b)}.stat.a .sval{color:var(--a)}.stat.g .sval{color:var(--g)}.stat.r .sval{color:var(--r)}
+
+/* FILTERS */
+.fbar{background:#fff;border-bottom:1px solid var(--bord);padding:9px 20px;display:flex;gap:7px;flex-wrap:wrap;align-items:center;position:sticky;top:52px;z-index:90}
+.fbar select,.fbar input{border:1px solid var(--bord);border-radius:7px;padding:6px 9px;font-size:12px;outline:none;background:#fff}
+.fbar select:focus,.fbar input:focus{border-color:var(--g)}
+.fbar input{flex:1;min-width:150px}
+.ftgl{padding:5px 11px;border:1px solid var(--bord);border-radius:7px;background:#fff;color:var(--t2);font-size:12px}
+.ftgl.on{background:var(--gl);border-color:var(--g);color:var(--gd);font-weight:500}
+.fcnt{font-size:11px;color:var(--t3);white-space:nowrap;margin-left:auto}
+
+/* TABLE */
+.twrap{margin:0 20px 24px;border-radius:12px;border:1px solid var(--bord);overflow:hidden;background:#fff}
+table{width:100%;border-collapse:collapse;table-layout:fixed}
+th{background:#F9F8F5;padding:9px 10px;text-align:left;font-size:10px;font-weight:600;color:var(--t2);text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--bord);white-space:nowrap}
+td{padding:8px 10px;border-bottom:1px solid #F0EDE6;vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:#FAFAF7}
+tr.mine td{background:#F0FBF6}
+tr.mine:hover td{background:#E5F7EF}
+
+/* STATUS BADGE */
+.sbadge{display:inline-flex;align-items:center;justify-content:space-between;gap:5px;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:500;cursor:pointer;border:none;width:100%;white-space:nowrap}
+.sbadge .arr{font-size:9px;opacity:.55}
+.snc{background:#F1EFE8;color:#44443F}
+.sco{background:var(--bl);color:var(--b)}
+.sde{background:var(--rl);color:var(--r)}
+.sav{background:var(--gl);color:var(--gd)}
+.smenu{position:absolute;top:calc(100%+3px);left:0;background:#fff;border:1px solid var(--bord);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.1);z-index:50;min-width:140px;overflow:hidden}
+.smenu button{display:block;width:100%;text-align:left;padding:7px 12px;border:none;background:none;font-size:12px}
+.smenu button:hover{background:var(--gr)}
+.smenu.h{display:none}
+.swrap{position:relative}
+
+/* RESP + OBS */
+.rsel{border:1px solid var(--bord);border-radius:7px;padding:4px 6px;width:100%;background:#fff;font-size:11px;outline:none}
+.rsel:focus{border-color:var(--g)}
+.rsel.mine{border-color:var(--g);background:var(--gl);color:var(--gd);font-weight:500}
+.obs{border:1px solid transparent;border-radius:7px;padding:4px 6px;width:100%;resize:none;height:30px;font-size:11px;background:transparent;line-height:1.4}
+.obs:hover{border-color:var(--bord);background:#fff}
+.obs:focus{outline:none;border-color:var(--g);background:#fff;height:56px}
+
+/* IMPORT PANEL */
+.imp-area{border:2px dashed var(--bord);border-radius:10px;padding:20px;text-align:center;cursor:pointer;transition:.2s}
+.imp-area:hover,.imp-area.over{border-color:var(--g);background:var(--gl)}
+.imp-area p{font-size:13px;color:var(--t2);margin-top:6px}
+.imp-area small{font-size:11px;color:var(--t3)}
+#csv-input{display:none}
+.prog{margin-top:10px;background:#F1EFE8;border-radius:20px;height:6px;overflow:hidden}
+.prog-bar{height:100%;background:var(--g);width:0%;transition:width .3s}
+.prog-lbl{font-size:11px;color:var(--t2);margin-top:4px}
+
+/* PAGINATION */
+.pag{display:flex;gap:5px;align-items:center;justify-content:center;padding:12px;border-top:1px solid #F0EDE6;flex-wrap:wrap}
+.pag button{border:1px solid var(--bord);border-radius:6px;padding:4px 9px;background:#fff;font-size:12px}
+.pag button:hover{background:var(--gr)}
+.pag button.on{background:var(--g);color:#fff;border-color:var(--g);font-weight:600}
+.pag button:disabled{opacity:.35;cursor:not-allowed}
+.pag-info{font-size:11px;color:var(--t2);padding:0 5px}
+
+/* EMPTY */
+.empty{text-align:center;padding:48px;color:var(--t2)}
+.empty h3{font-size:15px;font-weight:500;margin-bottom:6px}
+
+/* TOAST */
+.toast{position:fixed;bottom:20px;right:20px;background:#1A1A18;color:#fff;padding:10px 16px;border-radius:8px;font-size:12px;z-index:300;opacity:0;transform:translateY(6px);transition:.25s;pointer-events:none}
+.toast.on{opacity:1;transform:translateY(0)}
+</style>
+</head>
+<body>
+
+<!-- CONFIG MODAL -->
+<div class="ov" id="ov-cfg">
+<div class="modal">
+  <h2>⚙ Configuração Firebase</h2>
+  <p>Cole abaixo as credenciais do projeto Firebase.<br>
+     Você encontra em <strong>Console → Project Settings → Your apps → SDK setup and configuration</strong>.
+  </p>
+  <div class="fi">
+    <label>Config JSON (copie o objeto inteiro do Firebase)</label>
+    <textarea id="cfg-json" placeholder='{"apiKey":"AIza...","authDomain":"...","projectId":"...","storageBucket":"...","messagingSenderId":"...","appId":"..."}'></textarea>
+    <small>Cole o objeto JSON completo — <em>não</em> inclua o <code>const firebaseConfig =</code>, só o <code>{…}</code>.</small>
+  </div>
+  <button class="bp" onclick="saveConfig()">Salvar e conectar</button>
+</div>
+</div>
+
+<!-- SDR MODAL -->
+<div class="ov h" id="ov-sdr">
+<div class="modal">
+  <h2>👋 Quem é você?</h2>
+  <p>Seu nome fica salvo neste navegador. Os outros SDRs verão quem está trabalhando cada lead.</p>
+  <div class="sdrs" id="sdr-pick"></div>
+  <div class="modal-row">
+    <button class="bs" onclick="showCfg()">⚙ Config</button>
+    <button class="bp" id="btn-ok-sdr" onclick="confirmSdr()" disabled style="flex:1">Entrar</button>
+  </div>
+</div>
+</div>
+
+<!-- IMPORT MODAL -->
+<div class="ov h" id="ov-imp">
+<div class="modal">
+  <h2>📥 Importar leads do CSV</h2>
+  <p>Selecione o arquivo <strong>master_todos_contatos.csv</strong> (ou qualquer CSV gerado pelo build.py).<br>
+     Registros já existentes (mesmo telefone) são ignorados.</p>
+  <div class="imp-area" id="drop-area" onclick="document.getElementById('csv-input').click()"
+       ondragover="ev.preventDefault();this.classList.add('over')"
+       ondragleave="this.classList.remove('over')"
+       ondrop="onDrop(event)">
+    <div style="font-size:32px">📄</div>
+    <p>Clique para selecionar ou arraste o CSV aqui</p>
+    <small>Colunas esperadas: empresa, categoria_busca, telefone, whatsapp_provavel, …</small>
+  </div>
+  <input type="file" id="csv-input" accept=".csv" onchange="onFileSelect(this)">
+  <div class="prog" id="prog" style="display:none"><div class="prog-bar" id="prog-bar"></div></div>
+  <div class="prog-lbl" id="prog-lbl"></div>
+  <div class="modal-row" style="margin-top:14px">
+    <button class="bs" onclick="document.getElementById('ov-imp').classList.add('h')">Fechar</button>
+  </div>
+</div>
+</div>
+
+<!-- HEADER -->
+<div class="hdr">
+  <div class="hdr-logo">Mercúrio <span>Pre-CRM Prospecção BH</span></div>
+  <div class="sdr-chip">
+    <div class="sdr-av" id="h-av">?</div>
+    <span class="sdr-nm" id="h-nm">—</span>
+    <button class="sdr-ch" onclick="showSdr()">↕</button>
+  </div>
+  <div class="sync">
+    <div class="sdot" id="sdot"></div>
+    <span class="slbl" id="slbl">conectando…</span>
+  </div>
+  <div class="hdr-btns">
+    <button class="hdr-btn" onclick="document.getElementById('ov-imp').classList.remove('h')">⬆ Importar CSV</button>
+    <button class="hdr-btn" onclick="showCfg()">⚙</button>
+  </div>
+</div>
+
+<!-- STATS -->
+<div class="stats">
+  <div class="stat">  <div class="sval" id="s-tot">—</div><div class="slb">Total leads</div></div>
+  <div class="stat b"><div class="sval" id="s-meu">—</div><div class="slb">Meus leads</div></div>
+  <div class="stat a"><div class="sval" id="s-con">—</div><div class="slb">Contatando</div></div>
+  <div class="stat g"><div class="sval" id="s-ava">—</div><div class="slb">Avançaram</div></div>
+  <div class="stat r"><div class="sval" id="s-dec">—</div><div class="slb">Declinaram</div></div>
+  <div class="stat">  <div class="sval" id="s-liv">—</div><div class="slb">Sem resp.</div></div>
+</div>
+
+<!-- FILTERS -->
+<div class="fbar">
+  <select id="f-st" onchange="applyF()">
+    <option value="">Todos os status</option>
+    <option value="não contatado">Não contatado</option>
+    <option value="contatando">Contatando</option>
+    <option value="declinou">Declinou</option>
+    <option value="avançou">Avançou</option>
+  </select>
+  <select id="f-ca" onchange="applyF()"><option value="">Todas as categorias</option></select>
+  <select id="f-re" onchange="applyF()">
+    <option value="">Todos os SDRs</option>
+    <option value="__livre">Sem responsável</option>
+  </select>
+  <select id="f-wa" onchange="applyF()">
+    <option value="">Todos</option>
+    <option value="SIM">Só WhatsApp</option>
+  </select>
+  <input id="f-q" type="text" placeholder="Buscar empresa…" oninput="applyF()">
+  <button class="ftgl" id="btn-meus" onclick="toggleMeus()">Meus leads</button>
+  <span class="fcnt" id="fcnt"></span>
+</div>
+
+<!-- TABLE -->
+<div class="twrap">
+  <table>
+    <colgroup>
+      <col style="width:34px"><col style="width:22%"><col style="width:14%">
+      <col style="width:14%"><col style="width:108px"><col style="width:128px">
+      <col><col style="width:76px">
+    </colgroup>
+    <thead>
+      <tr>
+        <th>#</th><th>Empresa</th><th>Categoria</th><th>Contato</th>
+        <th>Responsável</th><th>Status</th><th>Observações</th><th>Atualizado</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+  <div class="pag" id="pag"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── CONSTANTES ────────────────────────────────────────────────────────────────
+const SDRs    = ['Simone','Rafael','Milena','Paloma','Sabrina','Diego','Marcelo'];
+const STATUS  = ['não contatado','contatando','declinou','avançou'];
+const SCLS    = {'não contatado':'snc','contatando':'sco','declinou':'sde','avançou':'sav'};
+const SLBL    = {'não contatado':'Não contatado','contatando':'Contatando','declinou':'Declinou','avançou':'Avançou'};
+const PER     = 50;
+
+// ── ESTADO ────────────────────────────────────────────────────────────────────
+let db, unsubscribe;
+let leads    = [];
+let filtered = [];
+let page     = 1;
+let sdr      = '';
+let meus     = false;
+let openMenu = null;
+let pickedSDR= '';
+
+// ── INIT ──────────────────────────────────────────────────────────────────────
+async function init() {
+  sdr = ls('sdr') || '';
+  updateHdrSDR();
+
+  // Verifica se o config embutido está preenchido ou tem no localStorage
+  let cfg = null;
+  const stored = ls('fb_cfg');
+  if (stored) {
+    try { cfg = JSON.parse(stored); } catch(_) {}
+  }
+  // Se o config do topo do arquivo está preenchido, usa ele
+  if (typeof FIREBASE_CONFIG !== 'undefined' && FIREBASE_CONFIG.projectId !== 'PREENCHA') {
+    cfg = FIREBASE_CONFIG;
+  }
+
+  if (!cfg || !cfg.projectId || cfg.projectId === 'PREENCHA') {
+    showCfg(); return;
+  }
+
+  try {
+    firebase.initializeApp(cfg);
+    db = firebase.firestore();
+    db.settings({ experimentalAutoDetectLongPolling: true });
+    if (!sdr) { showSdr(); return; }
+    subscribeLeads();
+  } catch(e) {
+    setSS('erro: ' + e.message, false);
+    showCfg();
+  }
+}
+
+// ── FIRESTORE REAL-TIME ───────────────────────────────────────────────────────
+function subscribeLeads() {
+  setSS('carregando…', null);
+  if (unsubscribe) unsubscribe();
+
+  unsubscribe = db.collection(COLECAO)
+    .onSnapshot(snap => {
+      snap.docChanges().forEach(ch => {
+        const doc = { _id: ch.doc.id, ...ch.doc.data() };
+        if (ch.type === 'added') {
+          leads.push(doc);
+        } else if (ch.type === 'modified') {
+          const i = leads.findIndex(l => l._id === doc._id);
+          if (i !== -1) leads[i] = doc; else leads.push(doc);
+        } else if (ch.type === 'removed') {
+          leads = leads.filter(l => l._id !== doc._id);
+        }
+      });
+      buildCatFilter();
+      applyF();
+      setSS('ao vivo', true);
+    }, err => {
+      setSS('erro: ' + err.message, false);
+    });
+}
+
+async function updateLead(id, changes) {
+  changes.updated_at  = new Date().toISOString();
+  changes.updated_by  = sdr;
+  try {
+    await db.collection(COLECAO).doc(id).update(changes);
+    const i = leads.findIndex(l => l._id === id);
+    if (i !== -1) Object.assign(leads[i], changes);
+    applyF();
+    return true;
+  } catch(e) {
+    toast('Erro ao salvar: ' + e.message);
+    return false;
+  }
+}
+
+// ── FILTROS ───────────────────────────────────────────────────────────────────
+function applyF() {
+  const fSt = gv('f-st'), fCa = gv('f-ca'), fRe = gv('f-re'),
+        fWa = gv('f-wa'), fQ  = gv('f-q').toLowerCase().trim();
+
+  filtered = leads.filter(l => {
+    if (fSt && l.status !== fSt) return false;
+    if (fCa && l.categoria !== fCa) return false;
+    if (fRe === '__livre' && l.responsavel) return false;
+    if (fRe && fRe !== '__livre' && l.responsavel !== fRe) return false;
+    if (fWa && l.whatsapp !== fWa) return false;
+    if (meus && l.responsavel !== sdr) return false;
+    if (fQ && !(l.empresa||'').toLowerCase().includes(fQ)) return false;
+    return true;
+  });
+
+  document.getElementById('fcnt').textContent = `${filtered.length.toLocaleString('pt-BR')} registros`;
+  page = 1;
+  renderTable();
+  renderStats();
+}
+
+function toggleMeus() {
+  meus = !meus;
+  document.getElementById('btn-meus').classList.toggle('on', meus);
+  applyF();
+}
+
+// ── RENDER ────────────────────────────────────────────────────────────────────
+function renderTable() {
+  const tbody = document.getElementById('tbody');
+  const start = (page-1)*PER;
+  const slice = filtered.slice(start, start+PER);
+
+  if (!slice.length) {
+    tbody.innerHTML = `<tr><td colspan="8" class="empty"><h3>Nenhum lead encontrado</h3><p>Ajuste os filtros acima.</p></td></tr>`;
+    document.getElementById('pag').innerHTML = '';
+    return;
+  }
+
+  tbody.innerHTML = slice.map((l, idx) => {
+    const isMine = l.responsavel === sdr;
+    const tel164 = (l.telefone_e164||'').replace(/\D/g,'');
+    const waUrl  = tel164 ? `https://wa.me/${tel164}` : '';
+    const sc     = SCLS[l.status] || 'snc';
+    const slabel = SLBL[l.status] || l.status;
+    const upd    = l.updated_at ? fmtDate(l.updated_at) : '';
+    const updBy  = l.updated_by ? `<div style="font-size:10px;color:var(--t2)">${e(l.updated_by)}</div>` : '';
+    const rOpts  = ['', ...SDRs].map(s =>
+      `<option value="${s}" ${l.responsavel===s?'selected':''}>${s||'— ninguém'}</option>`).join('');
+
+    return `<tr class="${isMine?'mine':''}" id="row-${l._id}">
+      <td style="font-size:10px;color:var(--t3)">${start+idx+1}</td>
+      <td>
+        <div style="font-weight:500;font-size:12px;line-height:1.3">${e(l.empresa)}</div>
+        ${l.endereco?`<div style="font-size:10px;color:var(--t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px">${e(l.endereco)}</div>`:''}
+        ${l.gmaps_url?`<a href="${l.gmaps_url}" target="_blank" style="font-size:10px;color:var(--t3)">📍 maps</a>`:''}
+      </td>
+      <td style="font-size:11px">
+        ${e(l.categoria||'')}
+        ${l.num_avaliacoes?`<div style="font-size:10px;color:var(--t3)">⭐ ${l.avaliacao} (${l.num_avaliacoes})</div>`:''}
+      </td>
+      <td>
+        ${waUrl && l.whatsapp==='SIM'
+          ? `<a href="${waUrl}" target="_blank" style="font-size:11px;color:var(--g);font-weight:500;display:flex;align-items:center;gap:3px">📱 ${e(l.telefone)}</a>`
+          : `<span style="font-size:11px">${e(l.telefone||'—')}</span>`}
+      </td>
+      <td>
+        <select class="rsel ${isMine?'mine':''}" onchange="onResp('${l._id}',this)">${rOpts}</select>
+      </td>
+      <td>
+        <div class="swrap">
+          <button class="sbadge ${sc}" onclick="toggleMenu('${l._id}',this)">
+            ${slabel} <span class="arr">▾</span>
+          </button>
+          <div class="smenu h" id="sm-${l._id}">
+            ${STATUS.map(s=>`<button onclick="onStatus('${l._id}','${s}')">${SLBL[s]}</button>`).join('')}
+          </div>
+        </div>
+      </td>
+      <td>
+        <textarea class="obs" rows="1" placeholder="Anotação…"
+          onblur="onObs('${l._id}',this)"
+          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();this.blur()}"
+        >${e(l.observacoes||'')}</textarea>
+      </td>
+      <td>
+        <div style="font-size:10px;color:var(--t3)">${upd}</div>
+        ${updBy}
+      </td>
+    </tr>`;
+  }).join('');
+
+  renderPag();
+}
+
+function renderStats() {
+  const tot  = leads.length;
+  const meu  = leads.filter(l=>l.responsavel===sdr).length;
+  const con  = leads.filter(l=>l.status==='contatando').length;
+  const ava  = leads.filter(l=>l.status==='avançou').length;
+  const dec  = leads.filter(l=>l.status==='declinou').length;
+  const liv  = leads.filter(l=>!l.responsavel).length;
+  ['tot','meu','con','ava','dec','liv'].forEach((k,i) =>
+    sv('s-'+k, [tot,meu,con,ava,dec,liv][i].toLocaleString('pt-BR')));
+}
+
+function renderPag() {
+  const pages = Math.ceil(filtered.length/PER);
+  const pag   = document.getElementById('pag');
+  if (pages <= 1) { pag.innerHTML=''; return; }
+  let h = `<span class="pag-info">${filtered.length.toLocaleString('pt-BR')}</span>`;
+  h += `<button onclick="goP(${Math.max(1,page-1)})" ${page===1?'disabled':''}>‹</button>`;
+  for (let i=1; i<=pages; i++) {
+    if (i===1||i===pages||Math.abs(i-page)<=2)
+      h += `<button class="${i===page?'on':''}" onclick="goP(${i})">${i}</button>`;
+    else if (Math.abs(i-page)===3)
+      h += `<span class="pag-info">…</span>`;
+  }
+  h += `<button onclick="goP(${Math.min(pages,page+1)})" ${page===pages?'disabled':''}>›</button>`;
+  pag.innerHTML = h;
+}
+
+function goP(p) {
+  page = p;
+  renderTable();
+  document.querySelector('.twrap')?.scrollIntoView({ behavior:'smooth', block:'start' });
+}
+
+// ── INTERAÇÕES DA TABELA ──────────────────────────────────────────────────────
+function toggleMenu(id, btn) {
+  const m = document.getElementById('sm-'+id);
+  if (openMenu && openMenu !== m) openMenu.classList.add('h');
+  m.classList.toggle('h');
+  openMenu = m.classList.contains('h') ? null : m;
+}
+document.addEventListener('click', e => {
+  if (openMenu && !e.target.closest('.swrap')) {
+    openMenu.classList.add('h'); openMenu = null;
+  }
+});
+
+async function onStatus(id, status) {
+  if (openMenu) { openMenu.classList.add('h'); openMenu = null; }
+  const lead = leads.find(l=>l._id===id);
+  const ch = { status };
+  if (status === 'contatando' && !lead?.responsavel) ch.responsavel = sdr;
+  const ok = await updateLead(id, ch);
+  if (ok) toast(SLBL[status]);
+}
+
+async function onResp(id, sel) {
+  const val = sel.value || null;
+  const ok = await updateLead(id, { responsavel: val });
+  if (!ok) sel.value = leads.find(l=>l._id===id)?.responsavel || '';
+}
+
+async function onObs(id, ta) {
+  await updateLead(id, { observacoes: ta.value });
+}
+
+// ── IMPORT CSV ────────────────────────────────────────────────────────────────
+function onDrop(ev) {
+  ev.preventDefault();
+  document.getElementById('drop-area').classList.remove('over');
+  const file = ev.dataTransfer.files[0];
+  if (file) importCSV(file);
+}
+function onFileSelect(input) {
+  if (input.files[0]) importCSV(input.files[0]);
+}
+
+async function importCSV(file) {
+  const text = await file.text();
+  const rows = parseCSV(text);
+  if (!rows.length) { toast('CSV vazio ou formato inválido'); return; }
+
+  // pega e164 já existentes no banco para dedup
+  const existentes = new Set(leads.map(l => l.telefone_e164).filter(Boolean));
+
+  const novos = rows.filter(r => {
+    const tel = r.telefone_e164 || '';
+    return tel ? !existentes.has(tel) : true;
+  }).map(r => ({
+    empresa:        r.empresa        || '',
+    categoria:      r.categoria_busca|| r.categoria || '',
+    segmento:       r.segmento_maps  || r.segmento  || '',
+    telefone:       r.telefone       || '',
+    whatsapp:       r.whatsapp_provavel || r.whatsapp || '',
+    avaliacao:      r.avaliacao      || '',
+    num_avaliacoes: r.num_avaliacoes || '',
+    endereco:       r.endereco       || '',
+    telefone_e164:  r.telefone_e164  || '',
+    gmaps_url:      r.gmaps_url      || '',
+    status:         'não contatado',
+    responsavel:    null,
+    observacoes:    '',
+    updated_at:     null,
+    updated_by:     null,
+  }));
+
+  if (!novos.length) { toast('Nenhum lead novo — todos já existem'); return; }
+
+  const prog  = document.getElementById('prog');
+  const pbar  = document.getElementById('prog-bar');
+  const plbl  = document.getElementById('prog-lbl');
+  prog.style.display = 'block';
+
+  const BATCH = 400; // Firestore permite 500 por batch
+  let done = 0;
+  for (let i = 0; i < novos.length; i += BATCH) {
+    const chunk = novos.slice(i, i+BATCH);
+    const batch = db.batch();
+    chunk.forEach(row => batch.set(db.collection(COLECAO).doc(), row));
+    await batch.commit();
+    done += chunk.length;
+    const pct = Math.round(done/novos.length*100);
+    pbar.style.width = pct + '%';
+    plbl.textContent = `${done} / ${novos.length} importados…`;
+  }
+  plbl.textContent = `✓ ${novos.length} leads importados com sucesso!`;
+  toast(`${novos.length} leads importados`);
+}
+
+function parseCSV(text) {
+  const lines = text.replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n');
+  if (lines.length < 2) return [];
+  const raw = lines[0].replace(/^\uFEFF/,''); // remove BOM
+  const headers = raw.split(',').map(h=>h.replace(/^"|"$/g,'').trim());
+  const rows = [];
+  for (let i=1; i<lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    const vals = splitCSVLine(line);
+    if (vals.length < headers.length/2) continue;
+    const obj = {};
+    headers.forEach((h,j) => { obj[h] = (vals[j]||'').replace(/^"|"$/g,''); });
+    if (obj.empresa) rows.push(obj);
+  }
+  return rows;
+}
+
+function splitCSVLine(line) {
+  const result = []; let cur = ''; let inQ = false;
+  for (let i=0; i<line.length; i++) {
+    const c = line[i];
+    if (c==='"') { inQ = !inQ; }
+    else if (c===',' && !inQ) { result.push(cur); cur=''; }
+    else { cur += c; }
+  }
+  result.push(cur);
+  return result;
+}
+
+// ── CONFIG ────────────────────────────────────────────────────────────────────
+function showCfg() {
+  document.getElementById('ov-cfg').classList.remove('h');
+  document.getElementById('ov-sdr').classList.add('h');
+}
+function saveConfig() {
+  const raw = document.getElementById('cfg-json').value.trim();
+  try {
+    const cfg = JSON.parse(raw);
+    if (!cfg.projectId) throw new Error('projectId ausente');
+    localStorage.setItem('fb_cfg', JSON.stringify(cfg));
+    document.getElementById('ov-cfg').classList.add('h');
+    location.reload();
+  } catch(ex) {
+    toast('JSON inválido: ' + ex.message);
+  }
+}
+
+// ── SDR ───────────────────────────────────────────────────────────────────────
+function showSdr() {
+  pickedSDR = sdr;
+  const pick = document.getElementById('sdr-pick');
+  pick.innerHTML = SDRs.map(s =>
+    `<button class="sdr-btn ${s===sdr?'on':''}" onclick="pickSDR('${s}',this)">${s}</button>`
+  ).join('');
+  document.getElementById('btn-ok-sdr').disabled = !sdr;
+  document.getElementById('ov-sdr').classList.remove('h');
+}
+function pickSDR(name, btn) {
+  pickedSDR = name;
+  document.querySelectorAll('.sdr-btn').forEach(b=>b.classList.remove('on'));
+  btn.classList.add('on');
+  document.getElementById('btn-ok-sdr').disabled = false;
+}
+function confirmSdr() {
+  if (!pickedSDR) return;
+  sdr = pickedSDR;
+  localStorage.setItem('sdr', sdr);
+  document.getElementById('ov-sdr').classList.add('h');
+  updateHdrSDR();
+  if (!db) { init(); return; }
+  if (!unsubscribe) subscribeLeads();
+  applyF(); renderStats();
+}
+function updateHdrSDR() {
+  sv('h-av', sdr ? sdr.slice(0,2).toUpperCase() : '?');
+  sv('h-nm', sdr || '—');
+}
+
+// ── FILTROS DINÂMICOS ─────────────────────────────────────────────────────────
+function buildCatFilter() {
+  const cats = [...new Set(leads.map(l=>l.categoria).filter(Boolean))].sort();
+  const sel  = document.getElementById('f-ca');
+  const cur  = sel.value;
+  sel.innerHTML = '<option value="">Todas as categorias</option>' +
+    cats.map(c=>`<option value="${c}" ${c===cur?'selected':''}>${c}</option>`).join('');
+}
+
+// ── UTILITÁRIOS ───────────────────────────────────────────────────────────────
+function setSS(msg, ok) {
+  sv('slbl', msg);
+  const d = document.getElementById('sdot');
+  d.classList.toggle('ok', ok===true);
+  d.classList.toggle('err', ok===false);
+}
+function fmtDate(iso) {
+  const d = new Date(iso), now = new Date(), diff = (now-d)/1000;
+  if (diff < 60)    return 'agora';
+  if (diff < 3600)  return `${Math.floor(diff/60)}m`;
+  if (diff < 86400) return `${Math.floor(diff/3600)}h`;
+  return d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
+}
+function e(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+let _tt;
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('on');
+  clearTimeout(_tt); _tt = setTimeout(()=>t.classList.remove('on'), 2500);
+}
+function gv(id) { return document.getElementById(id)?.value||''; }
+function sv(id,v){ const el=document.getElementById(id); if(el) el.textContent=v; }
+function ls(k)  { try { return localStorage.getItem(k); } catch(e) { return null; } }
+
+init();
+</script>
+</body>
+</html>
